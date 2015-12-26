@@ -1,0 +1,177 @@
+---
+title: "Coursera Practical Machine Learning Project"
+author: "Zhun Xu"
+date: "December 25, 2015"
+output: html_document
+---
+## Introduction
+This project use the data from accelerometers carried by six participants on their belt, forearm, arm, and dumbell, they were asked to perform barbell lifts correctly and incorrectly in five different ways, this information is also included in the training set as "classe" variable.  The goal of this project is to predict the "classe" in which they did the exercise with any of the accelerometers' data. 
+
+## Data and Method
+Training and test data of this project are downloaded from following URL  
+The training data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv  
+The test data: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+Both training and test data are first pre-processed to remove variables that are not accelerometers reading data, variables that are near zero, and variables with more than 90% are NULL value.  Training data is then splited into 'mytraining' and 'mytesting' dataset at p=0.7 for training and validation purpose respectively.  Since the outcome trying to predict, the "classe" variable is multinomial class data, methods of tree prediction will be employed here to find the best prediction model.  I will train the 'mytraining' data with six different methods: classification tree, bootstrap aggregating (bagging), random forest, boosting, linear discriminant analysis, and naive bayes, and each resulting model will be validated on 'mytesting' data to pick the model with lowerest out-of-sample error.  Finally, the picking model will be applied on test data and results are written into .txt file for later submission. 
+
+## Data Loading and Pre-processing
+### Load Necessary Libraries into R
+```{r warning=FALSE}
+library(caret)
+library(rattle)
+library(randomForest)
+library(gbm)
+library(MASS)
+library(klaR)
+library(knitr)
+```
+### Read Data from URL
+```{r cache=TRUE}
+trainingURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+training <- read.csv(trainingURL, header=TRUE)
+dim(training)
+
+testingURL <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testing <- read.csv(testingURL, header=TRUE)
+dim(testing)
+
+table(training$classe)
+```
+
+### Remove Non-Accelerometer Reading Variables
+```{r cache=TRUE}
+drops <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window")
+training <- training[, !(names(training) %in% drops)]
+testing <- testing[, !(names(testing) %in% drops)]
+```
+
+### Remove Near Zero Variables
+```{r cache=TRUE}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing <- testing[, -nzv]
+```
+
+### Remove Variables with Over 90% of NA Values
+```{r cache=TRUE}
+NAData <- is.na(training)
+Remove <- which(colSums(NAData) > nrow(training)*0.9)
+training <- training[, -Remove]
+testing <- testing[, -Remove]
+```
+
+### Create Training and Validation Sets
+```{r cache=TRUE}
+set.seed(123)
+inTrain <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+mytraining <- training[inTrain, ]
+mytesting <- training[-inTrain, ]
+dim(mytraining)
+dim(mytesting)
+```
+
+Original training and test data each contains 160 variables.  Data processing removes 107 variables from the original data, keeps 53 variables in the final data set.  There are 19622 records in training data, and 13737 are assigned into 'mytraining' data and rest 5885 are assigned into 'mytesting'data.  The outcome "classe" variable has five class value, A, B, C, D, and E. 
+
+## Build Prediction Models
+### Classification Tree 
+```{r cache=TRUE}
+set.seed(123)
+modFit_rpart <- train(classe ~ ., method="rpart", data=mytraining)
+fancyRpartPlot(modFit_rpart$finalModel, sub="Classification Tree")
+pred_rpart <- predict(modFit_rpart, mytesting)
+testing_rpart <- confusionMatrix(pred_rpart, mytesting$classe)
+testing_rpart$table
+```
+
+Prediction table of 'mytesting' dataset via rpart method shows only classe C is relatively well predicted (79.8% accuracy) under this method, classe A & B are predicted with 63% and 55% correction rate, and classe D & E are predicted at less than 50% correction rate.
+
+### Bootstrap Aggregating
+```{r cache=TRUE, warning=FALSE}
+set.seed(123)
+modFit_bagging <- train(classe ~ ., method="treebag", data=mytraining)
+pred_bagging <- predict(modFit_bagging, mytesting)
+testing_bagging <- confusionMatrix(pred_bagging, mytesting$classe)
+testing_bagging$table
+```
+
+Results from bootstrap aggregating method show a much better prediction of 'mytesting' dataset.  Accuracy of prediction ranges from 98% in classe D, 99% in classe B & C, to over 99.5% in classe A & E.
+
+### Random Forest
+```{r cache=TRUE, warning=FALSE}
+set.seed(123)
+modFit_randomforest <- randomForest(y=mytraining$classe, x=mytraining[,-53], importance=TRUE)
+pred_randomforest <- predict(modFit_randomforest, mytesting)
+testing_randomforest <- confusionMatrix(pred_randomforest, mytesting$classe)
+testing_randomforest$table
+```
+
+Random forest performs even better on 'mytesting' dataset, which gives 100% correct prediction on classe E, over 99.5% correct prediction on classe A, B, & C, and 98% correct prediction on classe D.
+ 
+### Boosting
+```{r cache=TRUE, warning=FALSE}
+set.seed(123)
+modFit_boosting <- gbm(classe~., data=mytraining, distribution = 'multinomial', n.trees = 500, interaction.depth = 4)
+pred_boosting <- predict(modFit_boosting, mytesting, n.trees=500, type='response')
+p.predBST <- LETTERS[apply(pred_boosting, 1, which.max)]
+testing_boosting <- confusionMatrix(p.predBST, mytesting$classe)
+testing_boosting$table
+```
+
+It seems that boosting method is not the best choice here, highest prediction accuracy is only 80% in classe A and 79% in classe C.  Lowest prediction accuracy is 60% in classe B.
+ 
+### Linear Discriminant Analysis
+```{r cache=TRUE, warning=FALSE}
+set.seed(123)
+modFit_lda <- train(classe~., data=mytraining, method="lda")
+pred_lda <- predict(modFit_lda, mytesting)
+testing_lda <- confusionMatrix(pred_lda, mytesting$classe)
+testing_lda$table
+```
+
+Linear discriminant analysis method also performs less optimal on prediction of 'mytesting' dataset, the prediction accuracy ranges from 59% to 82%.
+
+### Naive Bayes 
+```{r cache=TRUE, warning=FALSE}
+set.seed(123)
+modFit_naivebayes <- train(classe~., data=mytraining, method="nb")
+pred_naivebayes <- predict(modFit_naivebayes, mytesting)
+testing_naivebayes <- confusionMatrix(pred_naivebayes, mytesting$classe)
+testing_naivebayes$table
+```
+
+Naive bayes model predict the 'mytesting' dataset at a 63% to 88% correct rate. 
+
+## Prediction Model Selection
+```{r cache=TRUE, warning=FALSE}
+model.compare <- data.frame(classification.tree=testing_rpart$overall[1],
+		     bagging=testing_bagging$overall[1], 
+                 random.forest=testing_randomforest$overall[1], 
+                 boosting=testing_boosting$overall[1],
+                 linear.discriminat.analysis=testing_lda$overall[1],
+		     naive.bayes=testing_naivebayes$overall[1])
+model.compare
+```
+
+Comparing the out-of-sample errors in above models shows random forest method gives the highest accuracy (99.5%) in 'mytesting' dataset prediction.  Therefore, we will explore the model built by random forest method further and use this model to test the 'test' dataset.
+
+## Detail of Random Forest Model
+```{r cache=TRUE, warning=FALSE, fig.height=10, fig.width=10}
+plot(modFit_randomforest)
+kable(importance(modFit_randomforest))
+varImpPlot(modFit_randomforest)
+```
+
+The random forest final model plot shows that the overall error converge at around 100 trees.  From the variable importance table, we can tell that yaw_belt, roll_belt, magnet_dumbbell_z, pitch_belt,  magnet_dumbbell_y, and pitch_forearm are the first five most important variables in predict the activity classification by reducing classification error.
+
+## Test Prediction and Assignment Output
+```{r cache=TRUE, warning=FALSE}
+pred_test <- predict(modFit_randomforest, testing)
+submission = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_", i, ".txt")
+                write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, col.names = FALSE)
+        }
+}
+submission(pred_test)
+```
